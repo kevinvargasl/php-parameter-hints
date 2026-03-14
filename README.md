@@ -18,10 +18,18 @@ After indexing open and start editing a file to see the inline hints.
 
 ### From Marketplace
 
-> Coming soon.
+Visit [the extension page](https://marketplace.visualstudio.com/items?itemName=kevinvargasl.php-parameter-hints) and press **install**.
 
 
-### From VSIX (local build)
+### From VSIX
+
+## Last release
+- Download the .vsix file from the las [release](https://github.com/kevinvargasl/php-parameter-hints/releases)
+- Open VS Code
+- Press Ctrl+Shift+P and run Extensions: Install from VSIX...
+- Select the .vsix file
+
+## Local build
 
 1. Clone the repository:
 

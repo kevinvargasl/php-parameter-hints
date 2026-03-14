@@ -1,6 +1,6 @@
 {
   "name": "php-parameter-hints",
-  "displayName": "PHP Parameter Hints",
+  "displayName": "PHP Inline Parameter Hints",
   "description": "Inline parameter name hints for PHP function and method calls",
   "version": "0.1.0",
   "publisher": "kevinvargasl",
