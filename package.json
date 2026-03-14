@@ -4,6 +4,12 @@
   "description": "Inline parameter name hints for PHP function and method calls",
   "version": "0.1.0",
   "publisher": "kevinvargasl",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kevinvargasl/php-parameter-hints"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
