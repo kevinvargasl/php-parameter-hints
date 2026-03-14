@@ -1,0 +1,56 @@
+{
+  "name": "php-parameter-hints",
+  "displayName": "PHP Parameter Hints",
+  "description": "Inline parameter name hints for PHP function and method calls",
+  "version": "0.1.0",
+  "publisher": "kevinvargasl",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:php",
+    "onLanguage:blade"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "PHP Parameter Hints",
+      "properties": {
+        "phpParameterHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline parameter name hints"
+        },
+        "phpParameterHints.literalsOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Only show hints for literal values (strings, numbers, booleans, arrays)"
+        },
+        "phpParameterHints.collapseWhenEqual": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hide hint when the variable name matches the parameter name"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "php-parser": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.75.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.0"
+  }
+}
