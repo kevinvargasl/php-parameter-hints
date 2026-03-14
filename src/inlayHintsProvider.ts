@@ -13,6 +13,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
   private cache = new ParameterCache();
   private config: PhpParameterHintsConfig = getConfig();
   private tempFiles = new Map<string, { path: string; version: number }>();
+  private tempDir: string | undefined;
 
   private _onDidChangeInlayHints = new vscode.EventEmitter<void>();
   readonly onDidChangeInlayHints = this._onDidChangeInlayHints.event;
@@ -166,17 +167,25 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     return params;
   }
 
+  private ensureTempDir(): string {
+    if (!this.tempDir) {
+      this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "php-hints-"));
+    }
+    return this.tempDir;
+  }
+
   private getTempPhpUri(uriStr: string, docVersion: number, cleanedCode: string): vscode.Uri {
     const existing = this.tempFiles.get(uriStr);
     if (existing && existing.version === docVersion) {
       return vscode.Uri.file(existing.path);
     }
 
+    const dir = this.ensureTempDir();
     const tempPath = existing?.path ?? path.join(
-      os.tmpdir(),
-      `php-hints-${Date.now()}-${Math.random().toString(36).slice(2)}.php`
+      dir,
+      `${Date.now()}-${Math.random().toString(36).slice(2)}.php`
     );
-    fs.writeFileSync(tempPath, cleanedCode, "utf-8");
+    fs.writeFileSync(tempPath, cleanedCode, { encoding: "utf-8", mode: 0o600 });
     this.tempFiles.set(uriStr, { path: tempPath, version: docVersion });
     return vscode.Uri.file(tempPath);
   }
@@ -188,6 +197,10 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
       try { fs.unlinkSync(temp.path); } catch { /* ignore */ }
     }
     this.tempFiles.clear();
+    if (this.tempDir) {
+      try { fs.rmdirSync(this.tempDir); } catch { /* ignore */ }
+      this.tempDir = undefined;
+    }
   }
 }
 
@@ -198,7 +211,7 @@ function expandVariadics(
   const result: ResolvedParameter[] = [];
   for (let i = 0; i < params.length; i++) {
     if (params[i].isVariadic) {
-      const remaining = argCount - i;
+      const remaining = Math.min(argCount - i, 256);
       for (let j = 0; j < remaining; j++) {
         result.push({ name: `${params[i].name}[${j}]`, isVariadic: true });
       }

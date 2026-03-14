@@ -49,6 +49,8 @@ export function parseHoverSignature(
 }
 
 function extractParamString(markdown: string): string | null {
+  if (markdown.length > 50_000) return null;
+
   // Try function signature first
   let idx = markdown.search(/function\s+\w+\s*\(/);
   if (idx === -1) {
@@ -90,7 +92,7 @@ export function parseParamList(
     if (!parsed) continue;
 
     if (parsed.isVariadic) {
-      const remaining = argCount - i;
+      const remaining = Math.min(argCount - i, 256);
       for (let j = 0; j < remaining; j++) {
         result.push({
           name: `${parsed.name}[${j}]`,

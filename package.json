@@ -2,7 +2,7 @@
   "name": "php-parameter-hints",
   "displayName": "PHP Inline Parameter Hints",
   "description": "Inline parameter name hints for PHP function and method calls",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "kevinvargasl",
   "license": "MIT",
   "icon": "icon.png",

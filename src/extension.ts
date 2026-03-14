@@ -44,6 +44,14 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // Clean up temp files and cache when a document is closed
+  context.subscriptions.push(
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      if (!phpLanguages.includes(doc.languageId)) return;
+      provider.invalidateDocument(doc.uri);
+    })
+  );
+
   // Clear pending debounce timeouts on disposal
   context.subscriptions.push({
     dispose: () => {

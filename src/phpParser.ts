@@ -115,7 +115,7 @@ function blankOut(code: string, from: number, to: number): string {
  * Parses each expression separately and adjusts positions to match the original source.
  */
 function extractBladeEchoSites(code: string, sites: CallSite[]): void {
-  const regex = /\{\{(?!--)([\s\S]*?)\}\}|\{!!([\s\S]*?)!!\}/g;
+  const regex = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
   let match;
 
   while ((match = regex.exec(code)) !== null) {
@@ -164,7 +164,7 @@ function injectBladeEchos(original: string, cleaned: string): string {
   if (!original.includes("{{") && !original.includes("{!!")) return cleaned;
 
   const chars = cleaned.split("");
-  const regex = /\{\{(?!--)([\s\S]*?)\}\}|\{!!([\s\S]*?)!!\}/g;
+  const regex = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
   let match;
   let hasEchos = false;
 

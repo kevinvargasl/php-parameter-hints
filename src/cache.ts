@@ -22,7 +22,7 @@ export class ParameterCache {
   private parseCache = new Map<string, ParseCacheEntry>();
 
   private makeKey(name: string, line: number, character: number): string {
-    return `${name}:${line}:${character}`;
+    return `${name}\0${line}\0${character}`;
   }
 
   get(
