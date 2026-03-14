@@ -101,7 +101,3 @@ npm run test         # run tests
 ```
 
 Launch the Extension Development Host for debugging.
-
-## License
-
-[MIT](LICENCE)
