@@ -5,7 +5,7 @@
   "version": "0.1.2",
   "publisher": "kevinvargasl",
   "license": "MIT",
-  "icon": "icon.png",
+  "icon": "assets/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/kevinvargasl/php-parameter-hints"

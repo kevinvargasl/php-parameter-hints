@@ -1,10 +1,13 @@
-# PHP Parameter Hints
+<h3 align="center">
+<img src="https://raw.githubusercontent.com/kevinvargasl/php-parameter-hints/main/assets/logo.png" width="100" alt="Logo"/><br/>
+PHP Parameter Hints
+</h3>
 
 Inline parameter name hints for PHP function and method calls in VS Code. Works with both `.php` and `.blade.php` files.
 
 After indexing open and start editing a file to see the inline hints.
 
-![PHP Parameter Hints](images/dark-theme-example.png)
+![PHP Parameter Hints](assets/dark-theme-example.png)
 
 ## Features
 
@@ -83,13 +86,13 @@ You can edit the background and font colors to match your style, add to the sett
 
 Parameter hints for built-in and user-defined functions:
 
-![PHP hints](images/php-example.png)
+![PHP hints](assets/php-example.png)
 
 ### Blade files
 
 Hints inside `{{ }}` echo expressions, `@php` blocks, and `<?php ?>` blocks:
 
-![Blade hints](images/blade-example.png)
+![Blade hints](assets/blade-example.png)
 
 ## Requirements
 
@@ -97,15 +100,3 @@ Hints inside `{{ }}` echo expressions, `@php` blocks, and `<?php ?>` blocks:
 - A PHP language server extension (recommended: [Intelephense](https://marketplace.visualstudio.com/items?itemName=bmewburn.vscode-intelephense-client)) for best results with built-in functions and third-party libraries
 
 The extension works without a language server, but hints will only appear for functions and methods defined in the same file.
-
-## Development
-
-```bash
-npm install          # install dependencies
-npm run build        # build the extension
-npm run watch        # rebuild on changes
-npm run lint         # type-check
-npm run test         # run tests
-```
-
-Launch the Extension Development Host for debugging.
