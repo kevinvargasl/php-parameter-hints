@@ -7,7 +7,7 @@ Inline parameter name hints for PHP function and method calls in VS Code. Works 
 
 After indexing open and start editing a file to see the inline hints.
 
-![PHP Parameter Hints](assets/dark-theme-example.png)
+![PHP Parameter Hints](https://raw.githubusercontent.com/kevinvargasl/php-parameter-hints/main/assets/dark-theme-example.png)
 
 ## Features
 
@@ -53,11 +53,11 @@ You can edit the background and font colors to match your style, add to the sett
 
 <details>
 <summary>PHP files</summary>
-<img src="assets/php-example.png"/>
+<img src="https://raw.githubusercontent.com/kevinvargasl/php-parameter-hints/main/assets/php-example.png"/>
 </details>
 <details>
 <summary>Blade files</summary>
-<img src="assets/blade-example.png"/>
+<img src="https://raw.githubusercontent.com/kevinvargasl/php-parameter-hints/main/assets/blade-example.png"/>
 </details>
 
 ## Requirements

@@ -1,4 +1,5 @@
 src/**
+test/**
 node_modules/**
 .vscode/**
 tsconfig.json
@@ -6,3 +7,11 @@ esbuild.mjs
 .claude/**
 *.ts
 !dist/**
+CLAUDE.md
+.github/**
+.gitignore
+assets/blade-example.png
+assets/dark-theme-example.png
+assets/logo.png
+assets/php-example.png
+CLAUDE.md
