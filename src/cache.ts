@@ -25,13 +25,7 @@ export class ParameterCache {
     return `${name}\0${line}\0${character}`;
   }
 
-  get(
-    uri: string,
-    name: string,
-    line: number,
-    character: number,
-    docVersion: number
-  ): ResolvedParameter[] | undefined {
+  get(uri: string, name: string, line: number, character: number, docVersion: number): ResolvedParameter[] | undefined {
     const uriMap = this.store.get(uri);
     if (!uriMap) return undefined;
 
@@ -44,28 +38,19 @@ export class ParameterCache {
       return undefined;
     }
 
-    // Move to end for LRU ordering
     uriMap.delete(key);
     uriMap.set(key, entry);
 
     return entry.params;
   }
 
-  set(
-    uri: string,
-    name: string,
-    line: number,
-    character: number,
-    docVersion: number,
-    params: ResolvedParameter[]
-  ): void {
+  set(uri: string, name: string, line: number, character: number, docVersion: number, params: ResolvedParameter[]): void {
     let uriMap = this.store.get(uri);
     if (!uriMap) {
       uriMap = new Map();
       this.store.set(uri, uriMap);
     }
 
-    // Evict oldest entries if over limit
     if (uriMap.size >= MAX_ENTRIES_PER_URI) {
       const firstKey = uriMap.keys().next().value;
       if (firstKey !== undefined) uriMap.delete(firstKey);
@@ -81,13 +66,7 @@ export class ParameterCache {
     return entry;
   }
 
-  setParsed(
-    uri: string,
-    docVersion: number,
-    sites: CallSite[],
-    definitions: Map<string, ResolvedParameter[]>,
-    cleanedCode: string
-  ): void {
+  setParsed(uri: string, docVersion: number, sites: CallSite[], definitions: Map<string, ResolvedParameter[]>, cleanedCode: string): void {
     this.parseCache.set(uri, { sites, definitions, cleanedCode, docVersion });
   }
 

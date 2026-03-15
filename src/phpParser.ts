@@ -24,8 +24,6 @@ export interface ParseResult {
 
 export function parsePhp(code: string): ParseResult {
   try {
-    // Convert blade directives first so byte offsets are consistent
-    // between the converted code and the cleaned output.
     const converted = convertBladeDirectives(code);
     const cleaned = stripNonPhp(converted);
     const ast = parser.parseCode(cleaned, "source.php");
@@ -33,9 +31,7 @@ export function parsePhp(code: string): ParseResult {
     const defs = new Map<string, ResolvedParameter[]>();
     visitAll(ast, sites, defs);
 
-    // Use original code for call site positions (line/col are the same)
     extractBladeEchoSites(code, sites);
-    // Use converted code for byte-level injection (matches cleaned offsets)
     const finalCleaned = injectBladeEchos(converted, cleaned);
 
     return { callSites: sites, definitions: defs, cleanedCode: finalCleaned };
@@ -44,17 +40,9 @@ export function parsePhp(code: string): ParseResult {
   }
 }
 
-/**
- * Strips content outside PHP blocks, replacing it with whitespace to
- * preserve line numbers. Recognizes both <?php ... ?> and @php ... @endphp
- * (Blade directive) as PHP block boundaries.
- */
 function stripNonPhp(code: string): string {
-  // Expects @php/@endphp already converted by caller via convertBladeDirectives().
   if (!code.includes("?>")) {
-    // Entire file is PHP (has <?php, no closing tag) — nothing to strip
     if (code.includes("<?php")) return code;
-    // No PHP blocks at all (pure HTML/Blade) — blank everything
     return blankOut(code, 0, code.length);
   }
 
@@ -87,11 +75,6 @@ function stripNonPhp(code: string): string {
   return result.join("");
 }
 
-/**
- * Replace standalone @php/@endphp Blade directives with <?php/?>.
- * Replaces entire lines containing the directives to avoid character-count
- * mismatches, preserving line count by keeping the newline.
- */
 function convertBladeDirectives(code: string): string {
   const lines = code.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -105,15 +88,10 @@ function convertBladeDirectives(code: string): string {
   return lines.join("\n");
 }
 
-/** Replace a substring with spaces, preserving newlines for line numbering. */
 function blankOut(code: string, from: number, to: number): string {
   return code.substring(from, to).replace(/[^\n]/g, " ");
 }
 
-/**
- * Extract call sites from Blade echo expressions: {{ expr }} and {!! expr !!}.
- * Parses each expression separately and adjusts positions to match the original source.
- */
 function extractBladeEchoSites(code: string, sites: CallSite[]): void {
   const regex = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
   let match;
@@ -129,14 +107,12 @@ function extractBladeEchoSites(code: string, sites: CallSite[]): void {
     const leadingSpaces = content.length - content.trimStart().length;
     const exprStart = contentStart + leadingSpaces;
 
-    // Calculate base line and column of the expression start
     let baseLine = 0, baseCol = 0;
     for (let i = 0; i < exprStart; i++) {
       if (code[i] === "\n") { baseLine++; baseCol = 0; }
       else { baseCol++; }
     }
 
-    // Parse as PHP: "<?php " is 6 chars, so expression starts at column 6
     try {
       const ast = parser.parseCode(`<?php ${expr};`, "echo.php");
       const echoSites: CallSite[] = [];
@@ -151,15 +127,10 @@ function extractBladeEchoSites(code: string, sites: CallSite[]): void {
         }
         sites.push(site);
       }
-    } catch { /* ignore parse errors in echo expressions */ }
+    } catch { /* ignore */ }
   }
 }
 
-/**
- * Overlay Blade echo expression content into the cleaned PHP code so the
- * language server can resolve built-in functions. Merges all PHP blocks
- * into one continuous block by removing <?php/?> tags.
- */
 function injectBladeEchos(original: string, cleaned: string): string {
   if (!original.includes("{{") && !original.includes("{!!")) return cleaned;
 
@@ -179,17 +150,14 @@ function injectBladeEchos(original: string, cleaned: string): string {
     const start = match.index;
     const end = start + match[0].length;
 
-    // Blank opening delimiter
     for (let i = start; i < start + openLen && i < chars.length; i++) {
       chars[i] = " ";
     }
 
-    // Copy expression content at the original positions
     for (let i = start + openLen; i < end - closeLen && i < chars.length; i++) {
       chars[i] = original[i];
     }
 
-    // Replace closing delimiter with semicolon + spaces
     for (let i = end - closeLen; i < end && i < chars.length; i++) {
       chars[i] = i === end - closeLen ? ";" : " ";
     }
@@ -199,11 +167,9 @@ function injectBladeEchos(original: string, cleaned: string): string {
 
   let result = chars.join("");
 
-  // Merge all PHP blocks into one by removing tags
   result = result.replace(/\?>/g, "  ");
   result = result.replace(/<\?php/g, "     ");
 
-  // Ensure it starts with <?php
   if (result.length >= 5) {
     result = "<?php" + result.substring(5);
   }
@@ -279,7 +245,7 @@ function extractCallSite(node: any): CallSite | null {
     const text = extractArgText(arg);
 
     argInfos.push({
-      line: loc.line - 1, // php-parser uses 1-based lines
+      line: loc.line - 1,
       character: loc.column,
       isNamed,
       text,
@@ -312,11 +278,9 @@ function resolveName(node: any): string | null {
     return null;
   }
 
-  // Regular call
   const what = node.what;
   if (!what) return null;
 
-  // Method call: $obj->method()
   if (what.kind === "propertylookup" || what.kind === "staticlookup") {
     const offset = what.offset;
     if (typeof offset === "string") return offset;
@@ -324,7 +288,6 @@ function resolveName(node: any): string | null {
     return null;
   }
 
-  // Function call: func()
   if (typeof what.name === "string") return what.name;
   if (what.kind === "name" && what.name) return what.name;
 
@@ -360,12 +323,10 @@ function extractArgText(arg: any): string {
     return arg.name ?? "";
   }
 
-  // Variable
   if (arg.kind === "variable") {
     return typeof arg.name === "string" ? arg.name : "";
   }
 
-  // Literals
   if (arg.kind === "string") return `"${arg.value ?? ""}"`;
   if (arg.kind === "number" || arg.kind === "nowdoc" || arg.kind === "encapsed") {
     return String(arg.value ?? "");

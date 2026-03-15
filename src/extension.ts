@@ -15,7 +15,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerInlayHintsProvider(selector, provider)
   );
 
-  // Refresh hints when config changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("phpParameterHints")) {
@@ -24,7 +23,6 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Debounced cache invalidation on document changes
   const pendingInvalidations = new Map<string, NodeJS.Timeout>();
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((e) => {
@@ -44,7 +42,6 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Clean up temp files and cache when a document is closed
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (!phpLanguages.includes(doc.languageId)) return;
@@ -52,7 +49,6 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Clear pending debounce timeouts on disposal
   context.subscriptions.push({
     dispose: () => {
       for (const timeout of pendingInvalidations.values()) {
@@ -65,6 +61,4 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(provider);
 }
 
-export function deactivate(): void {
-  // Nothing to clean up — disposables handle it
-}
+export function deactivate(): void {}

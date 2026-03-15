@@ -19,11 +19,7 @@ export async function resolveParameters(
   return tryHover(uri, namePos, argCount);
 }
 
-async function trySignatureHelp(
-  uri: vscode.Uri,
-  position: vscode.Position,
-  argCount: number
-): Promise<ResolvedParameter[]> {
+async function trySignatureHelp(uri: vscode.Uri, position: vscode.Position, argCount: number): Promise<ResolvedParameter[]> {
   try {
     const help = await vscode.commands.executeCommand<vscode.SignatureHelp>(
       "vscode.executeSignatureHelpProvider",
@@ -42,18 +38,12 @@ async function trySignatureHelp(
   }
 }
 
-function parseSignatureParameters(
-  parameters: readonly vscode.ParameterInformation[],
-  argCount: number
-): ResolvedParameter[] {
+function parseSignatureParameters(parameters: readonly vscode.ParameterInformation[], argCount: number): ResolvedParameter[] {
   const result: ResolvedParameter[] = [];
 
   for (let i = 0; i < parameters.length; i++) {
     const param = parameters[i];
-    const label =
-      typeof param.label === "string"
-        ? param.label
-        : "";
+    const label = typeof param.label === "string" ? param.label : "";
 
     const parsed = parseParamLabel(label);
     if (!parsed) continue;
@@ -61,10 +51,7 @@ function parseSignatureParameters(
     if (parsed.isVariadic) {
       const remaining = argCount - i;
       for (let j = 0; j < remaining; j++) {
-        result.push({
-          name: `${parsed.name}[${j}]`,
-          isVariadic: true,
-        });
+        result.push({name: `${parsed.name}[${j}]`, isVariadic: true});
       }
       break;
     }
@@ -75,11 +62,7 @@ function parseSignatureParameters(
   return result;
 }
 
-async function tryHover(
-  uri: vscode.Uri,
-  position: vscode.Position,
-  argCount: number
-): Promise<ResolvedParameter[]> {
+async function tryHover(uri: vscode.Uri, position: vscode.Position, argCount: number): Promise<ResolvedParameter[]> {
   try {
     const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
       "vscode.executeHoverProvider",
@@ -91,13 +74,7 @@ async function tryHover(
 
     for (const hover of hovers) {
       for (const content of hover.contents) {
-        const text =
-          content instanceof vscode.MarkdownString
-            ? content.value
-            : typeof content === "string"
-              ? content
-              : "";
-
+        const text = content instanceof vscode.MarkdownString ? content.value : typeof content === "string" ? content : "";
         const params = parseHoverSignature(text, argCount);
         if (params.length > 0) return params;
       }

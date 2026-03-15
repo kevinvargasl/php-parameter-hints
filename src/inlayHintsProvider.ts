@@ -2,11 +2,11 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { CallSite, ResolvedParameter } from "./types";
+import { CallSite, ResolvedParameter, PhpParameterHintsConfig } from "./types";
 import { parsePhp } from "./phpParser";
 import { resolveParameters } from "./parameterResolver";
 import { ParameterCache } from "./cache";
-import { getConfig, PhpParameterHintsConfig } from "./config";
+import { getConfig } from "./config";
 import { isLiteral, namesMatch, formatLabel } from "./helpers";
 
 export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
@@ -34,11 +34,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     }
   }
 
-  async provideInlayHints(
-    document: vscode.TextDocument,
-    range: vscode.Range,
-    token: vscode.CancellationToken
-  ): Promise<vscode.InlayHint[]> {
+  async provideInlayHints(document: vscode.TextDocument, range: vscode.Range, token: vscode.CancellationToken): Promise<vscode.InlayHint[]> {
     const config = this.config;
     if (!config.enabled) return [];
 
@@ -46,7 +42,6 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     const uriStr = uri.toString();
     const docVersion = document.version;
 
-    // Cache parsed result (call sites + local definitions) per (uri, docVersion)
     let parsed = this.cache.getParsed(uriStr, docVersion);
     if (!parsed) {
       const result = parsePhp(document.getText());
@@ -59,14 +54,11 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
 
     const { sites: callSites, definitions: localDefs, cleanedCode } = parsed;
 
-    // For non-PHP files (e.g. Blade), write cleaned code to a temp .php file
-    // so the language server can resolve parameter names for built-in functions.
     let resolveUri = uri;
     if (document.languageId !== "php") {
       resolveUri = this.getTempPhpUri(uriStr, docVersion, cleanedCode);
     }
 
-    // Filter to visible range
     const visibleSites = callSites.filter((site) =>
       site.arguments.some(
         (arg) => arg.line >= range.start.line && arg.line <= range.end.line
@@ -75,7 +67,6 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
 
     if (visibleSites.length === 0) return [];
 
-    // Resolve parameters and build hints, checking cancellation between each site
     const hints: vscode.InlayHint[] = [];
 
     for (const site of visibleSites) {
@@ -94,12 +85,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     return hints;
   }
 
-  private buildHints(
-    site: CallSite,
-    params: ResolvedParameter[],
-    config: PhpParameterHintsConfig,
-    hints: vscode.InlayHint[]
-  ): void {
+  private buildHints(site: CallSite, params: ResolvedParameter[], config: PhpParameterHintsConfig, hints: vscode.InlayHint[]): void {
     for (let i = 0; i < site.arguments.length; i++) {
       const arg = site.arguments[i];
       const param = params[i];
@@ -119,34 +105,14 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     }
   }
 
-  private async resolveForSite(
-    site: CallSite,
-    resolveUri: vscode.Uri,
-    cacheUri: string,
-    docVersion: number,
-    token: vscode.CancellationToken,
-    localDefs: Map<string, ResolvedParameter[]>
-  ) {
-    let params = this.cache.get(
-      cacheUri,
-      site.name,
-      site.namePosition.line,
-      site.namePosition.character,
-      docVersion
-    );
+  private async resolveForSite(site: CallSite, resolveUri: vscode.Uri, cacheUri: string, docVersion: number, token: vscode.CancellationToken, localDefs: Map<string, ResolvedParameter[]>) {
+    let params = this.cache.get(cacheUri, site.name, site.namePosition.line, site.namePosition.character, docVersion);
 
     if (!params) {
       if (token.isCancellationRequested) return [];
 
-      params = await resolveParameters(
-        resolveUri,
-        site.namePosition,
-        site.arguments[0],
-        site.arguments.length
-      );
+      params = await resolveParameters(resolveUri, site.namePosition, site.arguments[0], site.arguments.length);
 
-      // Fallback: use local AST definitions (covers functions/methods
-      // defined in the same file)
       if (params.length === 0) {
         const localParams = localDefs.get(site.name);
         if (localParams) {
@@ -154,14 +120,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
         }
       }
 
-      this.cache.set(
-        cacheUri,
-        site.name,
-        site.namePosition.line,
-        site.namePosition.character,
-        docVersion,
-        params
-      );
+      this.cache.set(cacheUri, site.name, site.namePosition.line, site.namePosition.character, docVersion, params);
     }
 
     return params;
@@ -204,10 +163,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
   }
 }
 
-function expandVariadics(
-  params: ResolvedParameter[],
-  argCount: number
-): ResolvedParameter[] {
+function expandVariadics(params: ResolvedParameter[], argCount: number): ResolvedParameter[] {
   const result: ResolvedParameter[] = [];
   for (let i = 0; i < params.length; i++) {
     if (params[i].isVariadic) {

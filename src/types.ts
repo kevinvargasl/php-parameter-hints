@@ -15,3 +15,9 @@ export interface ResolvedParameter {
   name: string;
   isVariadic: boolean;
 }
+
+export interface PhpParameterHintsConfig {
+  enabled: boolean;
+  literalsOnly: boolean;
+  collapseWhenEqual: boolean;
+}

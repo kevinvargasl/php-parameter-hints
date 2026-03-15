@@ -170,6 +170,27 @@ describe("splitParams", () => {
   it("handles single param", () => {
     expect(splitParams("string $name")).toEqual(["string $name"]);
   });
+
+  it("handles default value with closing paren in string", () => {
+    expect(splitParams("string $param = ')', int $other")).toEqual([
+      "string $param = ')'",
+      " int $other",
+    ]);
+  });
+
+  it("handles default value with comma in string", () => {
+    expect(splitParams('string $param = ",", int $other')).toEqual([
+      'string $param = ","',
+      " int $other",
+    ]);
+  });
+
+  it("handles escaped quotes in default value", () => {
+    expect(splitParams("string $param = 'it\\'s', int $other")).toEqual([
+      "string $param = 'it\\'s'",
+      " int $other",
+    ]);
+  });
 });
 
 describe("parseHoverSignature", () => {
@@ -224,6 +245,24 @@ describe("parseHoverSignature", () => {
     expect(result).toEqual([
       { name: "filter", isVariadic: false },
       { name: "name", isVariadic: false },
+    ]);
+  });
+
+  it("handles default value with closing paren in string", () => {
+    const md = "function test(string $param = ')', int $other): void";
+    const result = parseHoverSignature(md, 2);
+    expect(result).toEqual([
+      { name: "param", isVariadic: false },
+      { name: "other", isVariadic: false },
+    ]);
+  });
+
+  it("handles default value with escaped quotes", () => {
+    const md = 'function test(string $param = "he said \\"hi\\"", int $other): void';
+    const result = parseHoverSignature(md, 2);
+    expect(result).toEqual([
+      { name: "param", isVariadic: false },
+      { name: "other", isVariadic: false },
     ]);
   });
 });

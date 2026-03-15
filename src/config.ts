@@ -1,10 +1,5 @@
 import * as vscode from "vscode";
-
-export interface PhpParameterHintsConfig {
-  enabled: boolean;
-  literalsOnly: boolean;
-  collapseWhenEqual: boolean;
-}
+import { PhpParameterHintsConfig } from "./types";
 
 export function getConfig(): PhpParameterHintsConfig {
   const cfg = vscode.workspace.getConfiguration("phpParameterHints");

@@ -34,43 +34,51 @@ export function parseParamLabel(label: string): ResolvedParameter | null {
   if (!match) return null;
 
   const isVariadic = !!match[2];
-  const name = match[3].substring(1); // strip $
+  const name = match[3].substring(1);
 
   return { name, isVariadic };
 }
 
-export function parseHoverSignature(
-  markdown: string,
-  argCount: number
-): ResolvedParameter[] {
+export function parseHoverSignature(markdown: string, argCount: number): ResolvedParameter[] {
   const paramStr = extractParamString(markdown);
   if (!paramStr) return [];
   return parseParamList(paramStr, argCount);
 }
 
+function updateQuoteState(char: string, inQuote: string | null): { inQuote: string | null; skip: boolean } {
+  if (char === "\\" && inQuote) return { inQuote, skip: true };
+  if ((char === "'" || char === '"') && !inQuote) return { inQuote: char, skip: false };
+  if (char === inQuote) return { inQuote: null, skip: false };
+  return { inQuote, skip: false };
+}
+
 function extractParamString(markdown: string): string | null {
   if (markdown.length > 50_000) return null;
 
-  // Try function signature first
   let idx = markdown.search(/function\s+\w+\s*\(/);
   if (idx === -1) {
-    // Fallback: method/function pattern inside code fence
     idx = markdown.search(/\w+\s*\(/);
     if (idx === -1) return null;
   }
 
-  // Find the opening paren
-  const openParen = markdown.indexOf("(", idx);
-  if (openParen === -1) return null;
+  const openParenthesis = markdown.indexOf("(", idx);
+  if (openParenthesis === -1) return null;
 
-  // Use depth counting to find the matching close paren
+  let inQuote: string | null = null;
   let depth = 0;
-  for (let i = openParen; i < markdown.length; i++) {
-    if (markdown[i] === "(") depth++;
-    else if (markdown[i] === ")") {
-      depth--;
-      if (depth === 0) {
-        return markdown.substring(openParen + 1, i);
+  for (let i = openParenthesis; i < markdown.length; i++) {
+    const char = markdown[i];
+    const q = updateQuoteState(char, inQuote);
+    inQuote = q.inQuote;
+    if (q.skip) { i++; continue; }
+
+    if (!inQuote) {
+      if (char === "(") depth++;
+      else if (char === ")") {
+        depth--;
+        if (depth === 0) {
+          return markdown.substring(openParenthesis + 1, i);
+        }
       }
     }
   }
@@ -78,10 +86,7 @@ function extractParamString(markdown: string): string | null {
   return null;
 }
 
-export function parseParamList(
-  paramStr: string,
-  argCount: number
-): ResolvedParameter[] {
+export function parseParamList(paramStr: string, argCount: number): ResolvedParameter[] {
   if (!paramStr.trim()) return [];
 
   const parts = splitParams(paramStr);
@@ -112,17 +117,30 @@ export function splitParams(paramStr: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let current = "";
+  let inQuote: string | null = null;
 
-  for (const char of paramStr) {
-    if (char === "(" || char === "[" || char === "<") depth++;
-    else if ((char === ")" || char === "]" || char === ">") && depth > 0) depth--;
-
-    if (char === "," && depth === 0) {
-      parts.push(current);
-      current = "";
-    } else {
-      current += char;
+  for (let i = 0; i < paramStr.length; i++) {
+    const char = paramStr[i];
+    const q = updateQuoteState(char, inQuote);
+    inQuote = q.inQuote;
+    if (q.skip) {
+      current += char + (paramStr[i + 1] ?? "");
+      i++;
+      continue;
     }
+
+    if (!inQuote) {
+      if (char === "(" || char === "[" || char === "<") depth++;
+      else if ((char === ")" || char === "]" || char === ">") && depth > 0) depth--;
+
+      if (char === "," && depth === 0) {
+        parts.push(current);
+        current = "";
+        continue;
+      }
+    }
+
+    current += char;
   }
 
   if (current.trim()) parts.push(current);

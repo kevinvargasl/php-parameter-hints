@@ -19,47 +19,16 @@ After indexing open and start editing a file to see the inline hints.
 
 ## Installation
 
-### From Marketplace
+### Marketplace
 
 Visit [the extension page](https://marketplace.visualstudio.com/items?itemName=kevinvargasl.php-parameter-hints) and press **install**.
 
+### From .vsix
 
-### From VSIX
-
-## Last release
 - Download the .vsix file from the las [release](https://github.com/kevinvargasl/php-parameter-hints/releases)
 - Open VS Code
-- Press Ctrl+Shift+P and run Extensions: Install from VSIX...
+- Press Ctrl+Shift+P and run **Extensions: Install from VSIX...**
 - Select the .vsix file
-
-## Local build
-
-1. Clone the repository:
-
-   ```bash
-   git clone git@github.com:kevinvargasl/php-parameter-hints.git
-   cd php-parameter-hints
-   ```
-
-2. Install dependencies and build:
-
-   ```bash
-   npm install
-   npm run build
-   ```
-
-3. Package the extension:
-
-   ```bash
-   npx @vscode/vsce package
-   ```
-
-4. Install the generated `.vsix` file in VS Code:
-   - Open VS Code
-   - Press `Ctrl+Shift+P` and run **Extensions: Install from VSIX...**
-   - Select the `.vsix` file
-
-
 
 ## Settings
 
@@ -82,17 +51,14 @@ You can edit the background and font colors to match your style, add to the sett
 
 ## Screenshots
 
-### PHP files
-
-Parameter hints for built-in and user-defined functions:
-
-![PHP hints](assets/php-example.png)
-
-### Blade files
-
-Hints inside `{{ }}` echo expressions, `@php` blocks, and `<?php ?>` blocks:
-
-![Blade hints](assets/blade-example.png)
+<details>
+<summary>PHP files</summary>
+<img src="assets/php-example.png"/>
+</details>
+<details>
+<summary>Blade files</summary>
+<img src="assets/blade-example.png"/>
+</details>
 
 ## Requirements
 
