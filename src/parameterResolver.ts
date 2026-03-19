@@ -49,7 +49,7 @@ function parseSignatureParameters(parameters: readonly vscode.ParameterInformati
     if (!parsed) continue;
 
     if (parsed.isVariadic) {
-      const remaining = argCount - i;
+      const remaining = Math.min(argCount - i, 256);
       for (let j = 0; j < remaining; j++) {
         result.push({name: `${parsed.name}[${j}]`, isVariadic: true});
       }
