@@ -11,7 +11,7 @@ const options = {
   format: "cjs",
   platform: "node",
   target: "es2022",
-  sourcemap: true,
+  sourcemap: watch,
   minify: !watch,
 };
 
