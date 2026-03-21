@@ -2,6 +2,9 @@
 const phpParser = require("php-parser");
 import { CallSite, ArgumentInfo, ResolvedParameter } from "./types";
 
+const BLADE_ECHO_REGEX = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
+const NON_NEWLINE = /[^\n]/g;
+
 const parser = new phpParser({
   parser: {
     php7: true,
@@ -22,17 +25,28 @@ export interface ParseResult {
   cleanedCode: string;
 }
 
+function hasBladeSyntax(code: string): boolean {
+  return code.includes("@php") || code.includes("{{") || code.includes("{!!");
+}
+
 export function parsePhp(code: string): ParseResult {
   try {
-    const converted = convertBladeDirectives(code);
+    const isBlade = hasBladeSyntax(code);
+    const converted = isBlade ? convertBladeDirectives(code) : code;
     const cleaned = stripNonPhp(converted);
     const ast = parser.parseCode(cleaned, "source.php");
     const sites: CallSite[] = [];
     const defs = new Map<string, ResolvedParameter[]>();
     visitAll(ast, sites, defs);
 
-    extractBladeEchoSites(code, sites);
-    const finalCleaned = injectBladeEchos(converted, cleaned);
+    let finalCleaned: string;
+    if (isBlade) {
+      const echoMatches = collectBladeEchoMatches(converted);
+      extractBladeEchoSites(converted, echoMatches, sites);
+      finalCleaned = injectBladeEchos(converted, cleaned, echoMatches);
+    } else {
+      finalCleaned = cleaned;
+    }
 
     return { callSites: sites, definitions: defs, cleanedCode: finalCleaned };
   } catch {
@@ -89,29 +103,72 @@ function convertBladeDirectives(code: string): string {
 }
 
 function blankOut(code: string, from: number, to: number): string {
-  return code.substring(from, to).replace(/[^\n]/g, " ");
+  return code.substring(from, to).replace(NON_NEWLINE, " ");
 }
 
-function extractBladeEchoSites(code: string, sites: CallSite[]): void {
-  const regex = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
+interface BladeEchoMatch {
+  index: number;
+  fullLength: number;
+  openLen: number;
+  closeLen: number;
+  contentStart: number;
+  contentEnd: number;
+}
+
+function collectBladeEchoMatches(code: string): BladeEchoMatch[] {
+  BLADE_ECHO_REGEX.lastIndex = 0;
+  const matches: BladeEchoMatch[] = [];
   let match;
 
-  while ((match = regex.exec(code)) !== null) {
+  while ((match = BLADE_ECHO_REGEX.exec(code)) !== null) {
     const content = match[1] ?? match[2];
     if (!content || !content.trim()) continue;
 
-    const expr = content.trim();
     const isRaw = match[0].startsWith("{!!");
     const openLen = isRaw ? 3 : 2;
-    const contentStart = match.index + openLen;
-    const leadingSpaces = content.length - content.trimStart().length;
-    const exprStart = contentStart + leadingSpaces;
+    const closeLen = isRaw ? 3 : 2;
 
-    let baseLine = 0, baseCol = 0;
-    for (let i = 0; i < exprStart; i++) {
-      if (code[i] === "\n") { baseLine++; baseCol = 0; }
-      else { baseCol++; }
-    }
+    matches.push({
+      index: match.index,
+      fullLength: match[0].length,
+      openLen,
+      closeLen,
+      contentStart: match.index + openLen,
+      contentEnd: match.index + match[0].length - closeLen,
+    });
+  }
+
+  return matches;
+}
+
+function buildLineOffsets(code: string): number[] {
+  const offsets = [0];
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === "\n") offsets.push(i + 1);
+  }
+  return offsets;
+}
+
+function offsetToLineCol(offsets: number[], offset: number): { line: number; col: number } {
+  let lo = 0, hi = offsets.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (offsets[mid] <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return { line: lo, col: offset - offsets[lo] };
+}
+
+function extractBladeEchoSites(code: string, echoMatches: BladeEchoMatch[], sites: CallSite[]): void {
+  if (echoMatches.length === 0) return;
+
+  const lineOffsets = buildLineOffsets(code);
+
+  for (const em of echoMatches) {
+    const raw = code.substring(em.contentStart, em.contentEnd);
+    const expr = raw.trim();
+    const exprStart = em.contentStart + (raw.length - raw.trimStart().length);
+    const pos = offsetToLineCol(lineOffsets, exprStart);
 
     try {
       const ast = parser.parseCode(`<?php ${expr};`, "echo.php");
@@ -119,11 +176,11 @@ function extractBladeEchoSites(code: string, sites: CallSite[]): void {
       visitAll(ast, echoSites, new Map());
 
       for (const site of echoSites) {
-        site.namePosition.line += baseLine;
-        site.namePosition.character += baseCol - 6;
+        site.namePosition.line += pos.line;
+        site.namePosition.character += pos.col - 6;
         for (const arg of site.arguments) {
-          arg.line += baseLine;
-          arg.character += baseCol - 6;
+          arg.line += pos.line;
+          arg.character += pos.col - 6;
         }
         sites.push(site);
       }
@@ -131,41 +188,36 @@ function extractBladeEchoSites(code: string, sites: CallSite[]): void {
   }
 }
 
-function injectBladeEchos(original: string, cleaned: string): string {
-  if (!original.includes("{{") && !original.includes("{!!")) return cleaned;
+function injectBladeEchos(original: string, cleaned: string, echoMatches: BladeEchoMatch[]): string {
+  if (echoMatches.length === 0) return cleaned;
 
-  const chars = cleaned.split("");
-  const regex = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
-  let match;
-  let hasEchos = false;
+  const parts: string[] = [];
+  let pos = 0;
 
-  while ((match = regex.exec(original)) !== null) {
-    const content = match[1] ?? match[2];
-    if (!content || !content.trim()) continue;
-    hasEchos = true;
+  for (const em of echoMatches) {
+    const start = em.index;
+    const end = start + em.fullLength;
 
-    const isRaw = match[0].startsWith("{!!");
-    const openLen = isRaw ? 3 : 2;
-    const closeLen = isRaw ? 3 : 2;
-    const start = match.index;
-    const end = start + match[0].length;
+    // Copy cleaned content up to this echo
+    if (start > pos) parts.push(cleaned.substring(pos, start));
 
-    for (let i = start; i < start + openLen && i < chars.length; i++) {
-      chars[i] = " ";
-    }
+    // Replace open delimiter with spaces
+    parts.push(" ".repeat(em.openLen));
 
-    for (let i = start + openLen; i < end - closeLen && i < chars.length; i++) {
-      chars[i] = original[i];
-    }
+    // Restore original content between delimiters
+    parts.push(original.substring(start + em.openLen, end - em.closeLen));
 
-    for (let i = end - closeLen; i < end && i < chars.length; i++) {
-      chars[i] = i === end - closeLen ? ";" : " ";
-    }
+    // Replace close delimiter: first char becomes ";", rest spaces
+    parts.push(";");
+    if (em.closeLen > 1) parts.push(" ".repeat(em.closeLen - 1));
+
+    pos = end;
   }
 
-  if (!hasEchos) return cleaned;
+  // Append remaining cleaned content
+  if (pos < cleaned.length) parts.push(cleaned.substring(pos));
 
-  let result = chars.join("");
+  let result = parts.join("");
 
   result = result.replace(/\?>/g, "  ");
   result = result.replace(/<\?php/g, "     ");

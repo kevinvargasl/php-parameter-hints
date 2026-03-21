@@ -49,7 +49,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
         uriStr, docVersion,
         result.callSites, result.definitions, result.cleanedCode
       );
-      parsed = this.cache.getParsed(uriStr, docVersion)!;
+      parsed = { sites: result.callSites, definitions: result.definitions, cleanedCode: result.cleanedCode, docVersion };
     }
 
     const { sites: callSites, definitions: localDefs, cleanedCode } = parsed;

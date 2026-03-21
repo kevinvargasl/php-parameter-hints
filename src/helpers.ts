@@ -1,5 +1,10 @@
 import { ResolvedParameter } from "./types";
 
+const STARTS_WITH_DIGIT = /^\d/;
+const SEPARATORS = /[_-]/g;
+const FUNCTION_SIGNATURE = /function\s+\w+\s*\(/;
+const CALLABLE_SIGNATURE = /\w+\s*\(/;
+
 export function isLiteral(text: string): boolean {
   if (!text) return false;
   if (
@@ -9,7 +14,7 @@ export function isLiteral(text: string): boolean {
     text === "false" ||
     text === "null" ||
     text === "[]" ||
-    /^\d/.test(text)
+    STARTS_WITH_DIGIT.test(text)
   ) {
     return true;
   }
@@ -18,8 +23,8 @@ export function isLiteral(text: string): boolean {
 
 export function namesMatch(argText: string, paramName: string): boolean {
   if (!argText || !paramName) return false;
-  const normalizedArg = argText.toLowerCase().replace(/[_-]/g, "");
-  const normalizedParam = paramName.toLowerCase().replace(/[_-]/g, "");
+  const normalizedArg = argText.toLowerCase().replace(SEPARATORS, "");
+  const normalizedParam = paramName.toLowerCase().replace(SEPARATORS, "");
   return normalizedArg === normalizedParam;
 }
 
@@ -55,9 +60,9 @@ function updateQuoteState(char: string, inQuote: string | null): { inQuote: stri
 function extractParamString(markdown: string): string | null {
   if (markdown.length > 50_000) return null;
 
-  let idx = markdown.search(/function\s+\w+\s*\(/);
+  let idx = markdown.search(FUNCTION_SIGNATURE);
   if (idx === -1) {
-    idx = markdown.search(/\w+\s*\(/);
+    idx = markdown.search(CALLABLE_SIGNATURE);
     if (idx === -1) return null;
   }
 
