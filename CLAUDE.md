@@ -29,11 +29,17 @@ VS Code extension that provides inline parameter name hints for PHP function/met
 
 ### Key modules
 
+- **`types.ts`** — Core TypeScript interfaces: `CallSite`, `ArgumentInfo`, `ResolvedParameter`, `PhpParameterHintsConfig`.
+- **`config.ts`** — Reads workspace settings via `getConfig()`. Called by the provider on each render.
 - **`inlayHintsProvider.ts`** — Implements `InlayHintsProvider`. Orchestrates parsing, resolution, caching, and temp file management. For Blade files, writes cleaned PHP to a temp file so the language server can resolve signatures.
 - **`phpParser.ts`** — Wraps `php-parser` to extract `CallSite[]` and local function definitions. Handles Blade: converts `@php`/`@endphp` to `<?php`/`?>`, strips non-PHP content (preserving line positions), and separately parses `{{ }}`/`{!! !!}` echo expressions.
 - **`parameterResolver.ts`** — Resolves parameter names by first trying SignatureHelp, then falling back to Hover markdown parsing.
 - **`helpers.ts`** — Pure functions for signature parsing (`extractParamString`, `splitParams`), literal detection, and name matching. Both `extractParamString` and `splitParams` share quote-tracking logic via `updateQuoteState`.
 - **`cache.ts`** — Two-level cache: parse cache (AST per document version) and parameter cache (resolved params per call site, 120s TTL, LRU eviction at 200 entries per URI).
+
+### Debouncing
+
+`extension.ts` debounces document-change events with a 250ms timeout before invalidating the cache. Uses a `Map` of pending timeouts per URI to prevent thundering herd on rapid edits.
 
 ### Blade support strategy
 
