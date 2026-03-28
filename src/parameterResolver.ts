@@ -29,11 +29,10 @@ async function trySignatureHelp(uri: vscode.Uri, position: vscode.Position, argC
 
         if (!help?.signatures?.length) return [];
 
-        const sig =
-            help.signatures[help.activeSignature ?? 0] ?? help.signatures[0];
-        if (!sig.parameters?.length) return [];
+        const signature = help.signatures[help.activeSignature ?? 0] ?? help.signatures[0];
+        if (!signature.parameters?.length) return [];
 
-        return parseSignatureParameters(sig.parameters, argCount);
+        return parseSignatureParameters(signature.parameters, argCount);
     } catch {
         return [];
     }
@@ -75,19 +74,13 @@ async function tryHover(uri: vscode.Uri, position: vscode.Position, argCount: nu
 
         for (const hover of hovers) {
             for (const content of hover.contents) {
-                const text =
-                    content instanceof vscode.MarkdownString
-                        ? content.value
-                        : typeof content === "string"
-                          ? content
-                          : "";
+                const text = content instanceof vscode.MarkdownString ? content.value : (typeof content === "string" ? content : "");
                 const params = parseHoverSignature(text, argCount);
                 if (params.length > 0) return params;
             }
         }
-
-        return [];
     } catch {
-        return [];
     }
+
+    return [];
 }

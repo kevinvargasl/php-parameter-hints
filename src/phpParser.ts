@@ -113,8 +113,7 @@ function blankOut(code: string, from: number, to: number): string {
 interface BladeEchoMatch {
     index: number;
     fullLength: number;
-    openLen: number;
-    closeLen: number;
+    delimLen: number;
     contentStart: number;
     contentEnd: number;
 }
@@ -128,17 +127,14 @@ function collectBladeEchoMatches(code: string): BladeEchoMatch[] {
         const content = match[1] ?? match[2];
         if (!content || !content.trim()) continue;
 
-        const isRaw = match[0].startsWith("{!!");
-        const openLen = isRaw ? 3 : 2;
-        const closeLen = isRaw ? 3 : 2;
+        const delimLen = match[0].startsWith("{!!") ? 3 : 2;
 
         matches.push({
             index: match.index,
             fullLength: match[0].length,
-            openLen,
-            closeLen,
-            contentStart: match.index + openLen,
-            contentEnd: match.index + match[0].length - closeLen,
+            delimLen,
+            contentStart: match.index + delimLen,
+            contentEnd: match.index + match[0].length - delimLen,
         });
     }
 
@@ -154,8 +150,8 @@ function buildLineOffsets(code: string): number[] {
 }
 
 function offsetToLineCol(offsets: number[], offset: number): { line: number; col: number } {
-    let lo = 0,
-        hi = offsets.length - 1;
+    let lo = 0;
+    let hi = offsets.length - 1;
     while (lo < hi) {
         const mid = (lo + hi + 1) >> 1;
         if (offsets[mid] <= offset) lo = mid;
@@ -210,14 +206,14 @@ function injectBladeEchos(original: string, cleaned: string, echoMatches: BladeE
         if (start > pos) parts.push(cleaned.substring(pos, start));
 
         // Replace open delimiter with spaces
-        parts.push(" ".repeat(em.openLen));
+        parts.push(" ".repeat(em.delimLen));
 
         // Restore original content between delimiters
-        parts.push(original.substring(start + em.openLen, end - em.closeLen));
+        parts.push(original.substring(start + em.delimLen, end - em.delimLen));
 
         // Replace close delimiter: first char becomes ";", rest spaces
         parts.push(";");
-        if (em.closeLen > 1) parts.push(" ".repeat(em.closeLen - 1));
+        if (em.delimLen > 1) parts.push(" ".repeat(em.delimLen - 1));
 
         pos = end;
     }
@@ -240,11 +236,7 @@ function injectBladeEchos(original: string, cleaned: string, echoMatches: BladeE
 function visitAll(node: any, sites: CallSite[], defs: Map<string, ResolvedParameter[]>): void {
     if (!node || typeof node !== "object") return;
 
-    if (
-        node.kind === "call" ||
-        node.kind === "new" ||
-        node.kind === "staticcall"
-    ) {
+    if (node.kind === "call" || node.kind === "new" || node.kind === "staticcall") {
         const site = extractCallSite(node);
         if (site) sites.push(site);
     }
@@ -324,10 +316,7 @@ function resolveName(node: any): string | null {
     if (node.kind === "new") {
         const what = node.what;
         if (!what) return null;
-        if (typeof what.name === "string") return what.name;
-        if (what.kind === "name" && what.name) return what.name;
-        if (what.resolution === "fqn" && what.name) return what.name;
-        return null;
+        return typeof what.name === "string" ? what.name : null;
     }
 
     if (node.kind === "staticcall") {
@@ -347,15 +336,10 @@ function resolveName(node: any): string | null {
         return null;
     }
 
-    if (typeof what.name === "string") return what.name;
-    if (what.kind === "name" && what.name) return what.name;
-
-    return null;
+    return typeof what.name === "string" ? what.name : null;
 }
 
-function resolveNamePosition(
-    node: any,
-): { line: number; character: number } | null {
+function resolveNamePosition(node: any): { line: number; character: number } | null {
     let loc: any = null;
 
     if (node.kind === "new") {
@@ -380,21 +364,24 @@ function resolveNamePosition(
 }
 
 function extractArgText(arg: any): string {
-    if (arg.kind === "namedargument") {
-        return arg.name ?? "";
+    switch (arg.kind) {
+        case "namedargument":
+            return arg.name ?? "";
+        case "variable":
+            return typeof arg.name === "string" ? arg.name : "";
+        case "string":
+            return `"${arg.value ?? ""}"`;
+        case "number":
+        case "nowdoc":
+        case "encapsed":
+            return String(arg.value ?? "");
+        case "boolean":
+            return arg.value ? "true" : "false";
+        case "nullkeyword":
+            return "null";
+        case "array":
+            return "[]";
+        default:
+            return "";
     }
-
-    if (arg.kind === "variable") {
-        return typeof arg.name === "string" ? arg.name : "";
-    }
-
-    if (arg.kind === "string") return `"${arg.value ?? ""}"`;
-    if (arg.kind === "number" || arg.kind === "nowdoc" || arg.kind === "encapsed") {
-        return String(arg.value ?? "");
-    }
-    if (arg.kind === "boolean") return arg.value ? "true" : "false";
-    if (arg.kind === "nullkeyword") return "null";
-    if (arg.kind === "array") return "[]";
-
-    return "";
 }
