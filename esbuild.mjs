@@ -4,22 +4,22 @@ const watch = process.argv.includes("--watch");
 
 /** @type {esbuild.BuildOptions} */
 const options = {
-  entryPoints: ["src/extension.ts"],
-  bundle: true,
-  outfile: "dist/extension.js",
-  external: ["vscode"],
-  format: "cjs",
-  platform: "node",
-  target: "es2022",
-  sourcemap: watch,
-  minify: !watch,
+    entryPoints: ["src/extension.ts"],
+    bundle: true,
+    outfile: "dist/extension.js",
+    external: ["vscode"],
+    format: "cjs",
+    platform: "node",
+    target: "es2022",
+    sourcemap: watch,
+    minify: !watch,
 };
 
 if (watch) {
-  const ctx = await esbuild.context(options);
-  await ctx.watch();
-  console.log("Watching for changes...");
+    const ctx = await esbuild.context(options);
+    await ctx.watch();
+    console.log("Watching for changes...");
 } else {
-  await esbuild.build(options);
-  console.log("Build complete.");
+    await esbuild.build(options);
+    console.log("Build complete.");
 }
