@@ -1,8 +1,10 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const phpParser = require("php-parser");
 import { CallSite, ArgumentInfo, ResolvedParameter } from "./types";
+import { updateQuoteState } from "./helpers";
 
 const BLADE_ECHO_REGEX = /\{\{(?!--)([\s\S]{0,2000}?)\}\}|\{!!([\s\S]{0,2000}?)!!\}/g;
+const BLADE_DIRECTIVE_REGEX = /@(foreach|for|while|elseif|if)\s*\(/g;
 const NON_NEWLINE = /[^\n]/g;
 
 const parser = new phpParser({
@@ -26,7 +28,13 @@ export interface ParseResult {
 }
 
 function hasBladeSyntax(code: string): boolean {
-    return code.includes("@php") || code.includes("{{") || code.includes("{!!");
+    BLADE_DIRECTIVE_REGEX.lastIndex = 0;
+    return (
+        code.includes("@php") ||
+        code.includes("{{") ||
+        code.includes("{!!") ||
+        BLADE_DIRECTIVE_REGEX.test(code)
+    );
 }
 
 export function parsePhp(code: string): ParseResult {
@@ -42,8 +50,15 @@ export function parsePhp(code: string): ParseResult {
         let finalCleaned: string;
         if (isBlade) {
             const echoMatches = collectBladeEchoMatches(converted);
+            const directiveMatches = collectBladeDirectiveMatches(converted);
             extractBladeEchoSites(converted, echoMatches, sites);
-            finalCleaned = injectBladeEchos(converted, cleaned, echoMatches);
+            extractBladeDirectiveSites(converted, directiveMatches, sites);
+            const echoInjected = injectBladeEchos(converted, cleaned, echoMatches);
+            const directiveInjected = injectBladeDirectives(converted, echoInjected, directiveMatches);
+            // Re-apply <?php prefix in case a directive at column 0 overwrote it
+            finalCleaned = directiveInjected.length >= 5
+                ? "<?php" + directiveInjected.substring(5)
+                : directiveInjected;
         } else {
             finalCleaned = cleaned;
         }
@@ -116,6 +131,13 @@ interface BladeEchoMatch {
     delimLen: number;
     contentStart: number;
     contentEnd: number;
+}
+
+interface BladeDirectiveMatch {
+    index: number;
+    directive: string;
+    openPos: number;
+    closePos: number;
 }
 
 function collectBladeEchoMatches(code: string): BladeEchoMatch[] {
@@ -192,6 +214,71 @@ function extractBladeEchoSites(code: string, echoMatches: BladeEchoMatch[], site
     }
 }
 
+function findMatchingParen(code: string, openPos: number): number {
+    let depth = 1;
+    let inQuote: string | null = null;
+    for (let i = openPos + 1; i < code.length; i++) {
+        const char = code[i];
+        const q = updateQuoteState(char, inQuote);
+        inQuote = q.inQuote;
+        if (q.skip) { i++; continue; }
+        if (!inQuote) {
+            if (char === "(") depth++;
+            else if (char === ")" && --depth === 0) return i;
+        }
+    }
+    return -1;
+}
+
+function collectBladeDirectiveMatches(code: string): BladeDirectiveMatch[] {
+    BLADE_DIRECTIVE_REGEX.lastIndex = 0;
+    const matches: BladeDirectiveMatch[] = [];
+    let match;
+    while ((match = BLADE_DIRECTIVE_REGEX.exec(code)) !== null) {
+        const openPos = match.index + match[0].length - 1;
+        const closePos = findMatchingParen(code, openPos);
+        if (closePos !== -1) {
+            matches.push({ index: match.index, directive: match[1], openPos, closePos });
+        }
+    }
+    return matches;
+}
+
+function extractBladeDirectiveSites(code: string, directiveMatches: BladeDirectiveMatch[], sites: CallSite[]): void {
+    if (directiveMatches.length === 0) return;
+
+    const lineOffsets = buildLineOffsets(code);
+
+    for (const dm of directiveMatches) {
+        const contentStart = dm.openPos + 1;
+        const content = code.substring(contentStart, dm.closePos);
+        const pos = offsetToLineCol(lineOffsets, contentStart);
+
+        const keyword = dm.directive === "if" || dm.directive === "elseif" ? "if" : dm.directive;
+        const prefix = `<?php ${keyword}(`;
+        const phpWrapper = `${prefix}${content}) {}`;
+        const prefixLen = prefix.length;
+
+        try {
+            const ast = parser.parseCode(phpWrapper, "directive.php");
+            const directiveSites: CallSite[] = [];
+            visitAll(ast, directiveSites, new Map());
+
+            for (const site of directiveSites) {
+                site.namePosition.line += pos.line;
+                site.namePosition.character += pos.col - prefixLen;
+                for (const arg of site.arguments) {
+                    arg.line += pos.line;
+                    arg.character += pos.col - prefixLen;
+                }
+                sites.push(site);
+            }
+        } catch {
+            /* ignore */
+        }
+    }
+}
+
 function injectBladeEchos(original: string, cleaned: string, echoMatches: BladeEchoMatch[]): string {
     if (echoMatches.length === 0) return cleaned;
 
@@ -231,6 +318,41 @@ function injectBladeEchos(original: string, cleaned: string, echoMatches: BladeE
     }
 
     return result;
+}
+
+function injectBladeDirectives(original: string, finalCleaned: string, directiveMatches: BladeDirectiveMatch[]): string {
+    if (directiveMatches.length === 0) return finalCleaned;
+
+    const parts: string[] = [];
+    let pos = 0;
+
+    for (const dm of directiveMatches) {
+        if (dm.index > pos) parts.push(finalCleaned.substring(pos, dm.index));
+
+        // Blank the "@directive(" prefix
+        parts.push(" ".repeat(dm.openPos - dm.index + 1));
+
+        // For @foreach, only inject the iterable expression (before " as ") so
+        // that "as $var" doesn't produce invalid PHP in the temp file.
+        const content = original.substring(dm.openPos + 1, dm.closePos);
+        if (dm.directive === "foreach") {
+            const asMatch = content.match(/\s+as\s+/);
+            const cutAt = asMatch ? asMatch.index! : content.length;
+            parts.push(content.substring(0, cutAt));
+            parts.push(" ".repeat(content.length - cutAt));
+        } else {
+            parts.push(content);
+        }
+
+        // Replace closing ) with ; to form a valid PHP statement
+        parts.push(";");
+
+        pos = dm.closePos + 1;
+    }
+
+    if (pos < finalCleaned.length) parts.push(finalCleaned.substring(pos));
+
+    return parts.join("");
 }
 
 function visitAll(node: any, sites: CallSite[], defs: Map<string, ResolvedParameter[]>): void {

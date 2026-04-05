@@ -47,7 +47,7 @@ export function parseHoverSignature(markdown: string, argCount: number): Resolve
     return parseParamList(paramStr, argCount);
 }
 
-function updateQuoteState(char: string, inQuote: string | null): { inQuote: string | null; skip: boolean } {
+export function updateQuoteState(char: string, inQuote: string | null): { inQuote: string | null; skip: boolean } {
     if (char === "\\" && inQuote) {
         return { inQuote, skip: true };
     }

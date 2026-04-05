@@ -368,6 +368,90 @@ describe("extractCallSites - Blade echo expressions", () => {
     });
 });
 
+describe("extractCallSites - Blade control directives", () => {
+    it("cleanedCode always starts with <?php even when a directive is at column 0", () => {
+        const code = `@if(count($items) > 0)\n<div></div>\n@endif`;
+        const { cleanedCode } = parsePhp(code);
+        expect(cleanedCode.startsWith("<?php")).toBe(true);
+    });
+
+    it("@if: extracts call site with correct line and character positions", () => {
+        // @if(myFn($a, $b))
+        // myFn at col 4, $a at col 9, $b at col 13
+        const code = `@if(myFn($a, $b))`;
+        const sites = parsePhp(code).callSites;
+        expect(sites).toHaveLength(1);
+        expect(sites[0].name).toBe("myFn");
+        expect(sites[0].namePosition.line).toBe(0);
+        expect(sites[0].namePosition.character).toBe(4);
+        expect(sites[0].arguments[0].line).toBe(0);
+        expect(sites[0].arguments[0].character).toBe(9);
+        expect(sites[0].arguments[1].line).toBe(0);
+        expect(sites[0].arguments[1].character).toBe(13);
+    });
+
+    it("@elseif: extracts call site with correct position", () => {
+        // @elseif(check($x))
+        // check at col 8, $x at col 14
+        const code = `@elseif(check($x))`;
+        const sites = parsePhp(code).callSites;
+        expect(sites).toHaveLength(1);
+        expect(sites[0].name).toBe("check");
+        expect(sites[0].namePosition.character).toBe(8);
+        expect(sites[0].arguments[0].character).toBe(14);
+    });
+
+    it("@foreach: extracts call site for function in collection expression", () => {
+        // @foreach(getItems($filter) as $item)
+        // getItems at col 9, $filter at col 18
+        const code = `@foreach(getItems($filter) as $item)`;
+        const sites = parsePhp(code).callSites;
+        const site = sites.find((s) => s.name === "getItems");
+        expect(site).toBeDefined();
+        expect(site!.namePosition.character).toBe(9);
+        expect(site!.arguments[0].character).toBe(18);
+    });
+
+    it("@while and @for: extracts call sites", () => {
+        const whileCode = `@while(hasNext($cursor))`;
+        const wSites = parsePhp(whileCode).callSites;
+        expect(wSites.find((s) => s.name === "hasNext")).toBeDefined();
+
+        const forCode = `@for($i = 0; $i < count($items); $i++)`;
+        const fSites = parsePhp(forCode).callSites;
+        expect(fSites.find((s) => s.name === "count")).toBeDefined();
+    });
+
+    it("directive on non-zero line with indentation: positions are relative to original source", () => {
+        const code = [
+            "<div>Header</div>",
+            "    @if(myFunc($a, $b))",
+        ].join("\n");
+        const sites = parsePhp(code).callSites;
+        expect(sites).toHaveLength(1);
+        expect(sites[0].name).toBe("myFunc");
+        expect(sites[0].namePosition.line).toBe(1);
+        expect(sites[0].namePosition.character).toBe(8);
+        expect(sites[0].arguments[0].line).toBe(1);
+        expect(sites[0].arguments[0].character).toBe(15);
+    });
+
+    it("nested parens: @if(in_array($x, getList($key))) returns both call sites", () => {
+        const code = `@if(in_array($x, getList($key)))`;
+        const sites = parsePhp(code).callSites;
+        const names = sites.map((s) => s.name).sort();
+        expect(names).toContain("in_array");
+        expect(names).toContain("getList");
+    });
+
+    it("malformed directive with no closing paren: no exception, empty result", () => {
+        const code = `@if($x`;
+        expect(() => parsePhp(code)).not.toThrow();
+        const sites = parsePhp(code).callSites;
+        expect(sites).toHaveLength(0);
+    });
+});
+
 describe("parsePhp - definitions", () => {
     it("extracts function definitions", () => {
         const code = `<?php\nfunction greet(string $name, int $age) { }`;

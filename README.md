@@ -12,7 +12,7 @@ After indexing open and start editing a file to see the inline hints.
 ## Features
 
 - Parameter name hints for function calls, method calls, constructors, and static methods
-- Blade template support: `<?php ?>` blocks, `@php`/`@endphp` directives, and `{{ }}`/`{!! !!}` echo expressions
+- Blade template support: `<?php ?>` blocks, `@php`/`@endphp` directives, `{{ }}`/`{!! !!}` echo expressions, and control directives (`@if`, `@elseif`, `@foreach`, `@for`, `@while`)
 - Handles PHP 8 named arguments (hints are hidden for named args)
 - Variadic parameter expansion (`...$items` shows as `items[0]:`, `items[1]:`, etc.)
 - Caching for fast performance on large files

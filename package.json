@@ -2,7 +2,7 @@
     "name": "php-parameter-hints",
     "displayName": "PHP Inline Parameter Hints",
     "description": "Inline parameter name hints for PHP function and method calls",
-    "version": "0.1.8",
+    "version": "0.2.0",
     "publisher": "kevinvargasl",
     "license": "MIT",
     "icon": "assets/icon.png",
@@ -53,7 +53,7 @@
         "php-parser": "^3.4.0"
     },
     "devDependencies": {
-        "@types/node": "^25.5.0",
+        "@types/node": "^25.5.2",
         "@types/vscode": "^1.75.0",
         "esbuild": "^0.27.4",
         "typescript": "^5.4.0",
