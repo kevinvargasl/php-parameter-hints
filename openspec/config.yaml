@@ -1,0 +1,28 @@
+schema: spec-driven
+
+context: |
+  Tech stack: TypeScript, VS Code Extension API, esbuild, Vitest
+  PHP parsing: php-parser npm package
+  Target files: .php and .blade.php
+
+  Architecture: InlayHintsProvider orchestrates parsing (phpParser.ts) and resolution
+  (parameterResolver.ts). Pure logic lives in helpers.ts and cache.ts. The vscode
+  module is unavailable in tests — only pure modules are unit-tested.
+
+  Conventions:
+  - Conventional commits (feat:, fix:, refactor:, etc.)
+  - No new files unless necessary; prefer editing existing ones
+  - Tests use Vitest; run with `npm test` or `npx vitest run <file>`
+  - Build: `npm run build` (minified), `npm run watch` (dev), `npm run lint` (tsc)
+
+  Key constraints:
+  - Line/column positions must be preserved when transforming Blade files
+  - The vscode module cannot be imported in test files
+  - Blade temp files must be written to disk (not openTextDocument)
+  - Cache has 120s TTL, LRU eviction at 200 entries per URI
+
+rules:
+  tasks:
+    - Break tasks into small, independently verifiable steps
+    - Each task should touch at most 1-2 files
+    - Prefer editing existing files over creating new ones
