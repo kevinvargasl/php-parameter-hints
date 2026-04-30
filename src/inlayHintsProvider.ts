@@ -4,16 +4,30 @@ import * as path from "path";
 import * as os from "os";
 import { CallSite, ResolvedParameter, PhpParameterHintsConfig } from "./types";
 import { parsePhp } from "./phpParser";
-import { resolveParameters } from "./parameterResolver";
+import {
+    resolveParametersFromHover,
+    resolveParametersFromSignatureHelp,
+} from "./parameterResolver";
 import { ParameterCache } from "./cache";
 import { getConfig } from "./config";
 import { isLiteral, namesMatch, formatLabel } from "./helpers";
 
+const MAX_CONCURRENT_RESOLVES = 4;
+
+const fsp = fs.promises;
+
+interface TempFileEntry {
+    path: string;
+    version: number;
+    cleanedHash: string;
+}
+
 export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     private cache = new ParameterCache();
     private config: PhpParameterHintsConfig = getConfig();
-    private tempFiles = new Map<string, { path: string; version: number }>();
+    private tempFiles = new Map<string, TempFileEntry>();
     private tempDir: string | undefined;
+    private tempDirPromise: Promise<string> | undefined;
 
     private _onDidChangeInlayHints = new vscode.EventEmitter<void>();
     readonly onDidChangeInlayHints = this._onDidChangeInlayHints.event;
@@ -25,17 +39,17 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
     }
 
     invalidateDocument(uri: vscode.Uri): void {
+        this.cache.invalidate(uri.toString());
+    }
+
+    closeDocument(uri: vscode.Uri): void {
         const uriStr = uri.toString();
         this.cache.invalidate(uriStr);
         const temp = this.tempFiles.get(uriStr);
-        if (temp) {
-            try {
-                fs.unlinkSync(temp.path);
-            } catch {
-                /* ignore */
-            }
-            this.tempFiles.delete(uriStr);
-        }
+        if (!temp) return;
+
+        this.tempFiles.delete(uriStr);
+        void this.deleteTempFile(temp.path);
     }
 
     async provideInlayHints(document: vscode.TextDocument, range: vscode.Range, token: vscode.CancellationToken): Promise<vscode.InlayHint[]> {
@@ -58,6 +72,7 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
             );
             parsed = {
                 sites: result.callSites,
+                sitesByLine: new Map(),
                 definitions: result.definitions,
                 cleanedCode: result.cleanedCode,
                 docVersion,
@@ -72,39 +87,87 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
 
         let resolveUri = uri;
         if (document.languageId !== "php") {
-            resolveUri = this.getTempPhpUri(uriStr, docVersion, cleanedCode);
+            resolveUri = await this.getTempPhpUri(
+                uriStr,
+                docVersion,
+                cleanedCode,
+            );
         }
 
-        const visibleSites = callSites.filter((site) =>
-            site.arguments.some(
-                (arg) =>
-                    arg.line >= range.start.line && arg.line <= range.end.line,
-            ),
+        const visibleSites = this.cache.getParsedSitesInRange(
+            uriStr,
+            docVersion,
+            range.start.line,
+            range.end.line,
         );
 
         if (visibleSites.length === 0) return [];
 
+        const resolvedSites = await this.resolveVisibleSites(
+            visibleSites,
+            resolveUri,
+            uriStr,
+            docVersion,
+            token,
+            localDefs,
+        );
+
+        if (token.isCancellationRequested) return [];
+
         const hints: vscode.InlayHint[] = [];
-
-        for (const site of visibleSites) {
-            if (token.isCancellationRequested) return [];
-
-            const params = await this.resolveForSite(
-                site,
-                resolveUri,
-                uriStr,
-                docVersion,
-                token,
-                localDefs,
-            );
-
+        for (const { site, params } of resolvedSites) {
             if (token.isCancellationRequested) return [];
             if (params.length === 0) continue;
-
             this.buildHints(site, params, config, hints);
         }
 
         return hints;
+    }
+
+    private async resolveVisibleSites(
+        visibleSites: CallSite[],
+        resolveUri: vscode.Uri,
+        cacheUri: string,
+        docVersion: number,
+        token: vscode.CancellationToken,
+        localDefs: Map<string, ResolvedParameter[]>,
+    ): Promise<Array<{ site: CallSite; params: ResolvedParameter[] }>> {
+        const results = new Array<{ site: CallSite; params: ResolvedParameter[] }>(
+            visibleSites.length,
+        );
+        const workerCount = Math.min(
+            MAX_CONCURRENT_RESOLVES,
+            visibleSites.length,
+        );
+        let nextIndex = 0;
+
+        const workers = Array.from({ length: workerCount }, async () => {
+            while (!token.isCancellationRequested) {
+                const index = nextIndex++;
+                if (index >= visibleSites.length) return;
+
+                const site = visibleSites[index];
+                const params = await this.resolveForSite(
+                    site,
+                    resolveUri,
+                    cacheUri,
+                    docVersion,
+                    token,
+                    localDefs,
+                );
+
+                results[index] = { site, params };
+            }
+        });
+
+        await Promise.all(workers);
+
+        return token.isCancellationRequested
+            ? []
+            : results.filter(
+                  (result): result is { site: CallSite; params: ResolvedParameter[] } =>
+                      result !== undefined,
+              );
     }
 
     private buildHints(site: CallSite, params: ResolvedParameter[], config: PhpParameterHintsConfig, hints: vscode.InlayHint[]): void {
@@ -136,95 +199,180 @@ export class PhpInlayHintsProvider implements vscode.InlayHintsProvider {
         token: vscode.CancellationToken,
         localDefs: Map<string, ResolvedParameter[]>,
     ) {
+        const { name } = site;
+        const { line, character } = site.namePosition;
+
         let params = this.cache.get(
             cacheUri,
-            site.name,
-            site.namePosition.line,
-            site.namePosition.character,
+            name,
+            line,
+            character,
             docVersion,
         );
 
-        if (!params) {
-            if (token.isCancellationRequested) return [];
+        if (params) {
+            return params;
+        }
 
-            params = await resolveParameters(
-                resolveUri,
-                site.namePosition,
-                site.arguments[0],
-                site.arguments.length,
-            );
+        const inFlight = this.cache.getInFlight(
+            cacheUri,
+            name,
+            line,
+            character,
+            docVersion,
+        );
+        if (inFlight) {
+            return inFlight;
+        }
 
-            if (params.length === 0) {
-                const localParams = localDefs.get(site.name);
-                if (localParams) {
-                    params = expandVariadics(
-                        localParams,
-                        site.arguments.length,
-                    );
-                }
-            }
+        if (token.isCancellationRequested) return [];
 
+        const localParams = localDefs.get(name);
+        if (localParams) {
+            params = expandVariadics(localParams, site.arguments.length);
             this.cache.set(
                 cacheUri,
-                site.name,
-                site.namePosition.line,
-                site.namePosition.character,
+                name,
+                line,
+                character,
                 docVersion,
                 params,
             );
+            return params;
         }
 
-        return params;
-    }
-
-    private ensureTempDir(): string {
-        if (!this.tempDir) {
-            this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "php-hints-"));
-        }
-        return this.tempDir;
-    }
-
-    private getTempPhpUri(uriStr: string, docVersion: number, cleanedCode: string): vscode.Uri {
-        const existing = this.tempFiles.get(uriStr);
-        if (existing && existing.version === docVersion) {
-            return vscode.Uri.file(existing.path);
-        }
-
-        const dir = this.ensureTempDir();
-        const tempPath =
-            existing?.path ??
-            path.join(
-                dir,
-                `${Date.now()}-${Math.random().toString(36).slice(2)}.php`,
+        const resolvePromise = (async () => {
+            const resolved = await resolveParametersFromSignatureHelp(
+                resolveUri,
+                site.arguments[0],
+                site.arguments.length,
             );
-        fs.writeFileSync(tempPath, cleanedCode, {
+            if (resolved.length > 0) {
+                return resolved;
+            }
+
+            return resolveParametersFromHover(
+                resolveUri,
+                site.namePosition,
+                site.arguments.length,
+            );
+        })();
+
+        this.cache.setInFlight(
+            cacheUri,
+            name,
+            line,
+            character,
+            docVersion,
+            resolvePromise,
+        );
+
+        try {
+            params = await resolvePromise;
+            this.cache.set(
+                cacheUri,
+                name,
+                line,
+                character,
+                docVersion,
+                params,
+            );
+            return params;
+        } finally {
+            this.cache.deleteInFlight(
+                cacheUri,
+                name,
+                line,
+                character,
+                docVersion,
+            );
+        }
+    }
+
+    private async ensureTempDir(): Promise<string> {
+        if (this.tempDir) {
+            return this.tempDir;
+        }
+
+        if (!this.tempDirPromise) {
+            this.tempDirPromise = fsp
+                .mkdtemp(path.join(os.tmpdir(), "php-hints-"))
+                .then((dir) => {
+                    this.tempDir = dir;
+                    return dir;
+                })
+                .finally(() => {
+                    this.tempDirPromise = undefined;
+                });
+        }
+
+        return this.tempDirPromise;
+    }
+
+    private async getTempPhpUri(
+        uriStr: string,
+        docVersion: number,
+        cleanedCode: string,
+    ): Promise<vscode.Uri> {
+        const cleanedHash = hashString(cleanedCode);
+        const existing = this.tempFiles.get(uriStr);
+        if (existing) {
+            if (existing.version === docVersion || existing.cleanedHash === cleanedHash) {
+                existing.version = docVersion;
+                if (existing.cleanedHash !== cleanedHash) {
+                    existing.cleanedHash = cleanedHash;
+                }
+                return vscode.Uri.file(existing.path);
+            }
+        }
+
+        const dir = await this.ensureTempDir();
+        const tempPath = existing?.path ?? path.join(dir, `${hashString(uriStr)}.php`);
+        await fsp.writeFile(tempPath, cleanedCode, {
             encoding: "utf-8",
             mode: 0o600,
         });
-        this.tempFiles.set(uriStr, { path: tempPath, version: docVersion });
+        this.tempFiles.set(uriStr, {
+            path: tempPath,
+            version: docVersion,
+            cleanedHash,
+        });
         return vscode.Uri.file(tempPath);
+    }
+
+    private async deleteTempFile(tempPath: string): Promise<void> {
+        try {
+            await fsp.unlink(tempPath);
+        } catch {
+            /* ignore */
+        }
     }
 
     dispose(): void {
         this._onDidChangeInlayHints.dispose();
         this.cache.clear();
-        for (const temp of this.tempFiles.values()) {
-            try {
-                fs.unlinkSync(temp.path);
-            } catch {
-                /* ignore */
-            }
-        }
+
+        const tempPaths = Array.from(this.tempFiles.values(), (temp) => temp.path);
         this.tempFiles.clear();
+        void Promise.all(tempPaths.map((tempPath) => this.deleteTempFile(tempPath)));
+
         if (this.tempDir) {
-            try {
-                fs.rmdirSync(this.tempDir);
-            } catch {
-                /* ignore */
-            }
+            const dir = this.tempDir;
             this.tempDir = undefined;
+            void fsp.rm(dir, { recursive: true, force: true }).catch(() => {
+                /* ignore */
+            });
         }
     }
+}
+
+function hashString(text: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
 }
 
 function expandVariadics(params: ResolvedParameter[], argCount: number): ResolvedParameter[] {

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ParameterCache } from "../src/cache";
 
+const TEST_PARAMS = [{ name: "a", isVariadic: false }];
+
 describe("ParameterCache", () => {
     let cache: ParameterCache;
 
@@ -75,6 +77,43 @@ describe("ParameterCache", () => {
     });
 });
 
+describe("ParameterCache - in-flight caching", () => {
+    let cache: ParameterCache;
+
+    beforeEach(() => {
+        cache = new ParameterCache();
+    });
+
+    it("stores and retrieves in-flight promises", async () => {
+        const promise = Promise.resolve(TEST_PARAMS);
+        cache.setInFlight("file:///test.php", "foo", 0, 0, 1, promise);
+
+        await expect(
+            cache.getInFlight("file:///test.php", "foo", 0, 0, 1),
+        ).resolves.toEqual(TEST_PARAMS);
+    });
+
+    it("returns undefined for in-flight entries when doc version changes", () => {
+        const promise = Promise.resolve(TEST_PARAMS);
+        cache.setInFlight("file:///test.php", "foo", 0, 0, 1, promise);
+
+        expect(
+            cache.getInFlight("file:///test.php", "foo", 0, 0, 2),
+        ).toBeUndefined();
+    });
+
+    it("deletes matching in-flight entries", () => {
+        const promise = Promise.resolve(TEST_PARAMS);
+        cache.setInFlight("file:///test.php", "foo", 0, 0, 1, promise);
+
+        cache.deleteInFlight("file:///test.php", "foo", 0, 0, 1);
+
+        expect(
+            cache.getInFlight("file:///test.php", "foo", 0, 0, 1),
+        ).toBeUndefined();
+    });
+});
+
 describe("ParameterCache - parse result caching", () => {
     let cache: ParameterCache;
 
@@ -103,6 +142,44 @@ describe("ParameterCache - parse result caching", () => {
         expect(result?.cleanedCode).toBe("<?php\ntest(1);");
     });
 
+    it("indexes parsed sites by visible line range", () => {
+        const indexedSites = [
+            {
+                name: "foo",
+                namePosition: { line: 0, character: 0 },
+                arguments: [
+                    { line: 0, character: 4, isNamed: false, text: "1" },
+                    { line: 2, character: 4, isNamed: false, text: "2" },
+                ],
+            },
+            {
+                name: "bar",
+                namePosition: { line: 1, character: 0 },
+                arguments: [
+                    { line: 1, character: 4, isNamed: false, text: "3" },
+                ],
+            },
+        ];
+
+        cache.setParsed(
+            "file:///test.php",
+            1,
+            indexedSites,
+            defs,
+            "<?php\nfoo(1,\n2);\nbar(3);",
+        );
+
+        expect(
+            cache.getParsedSitesInRange("file:///test.php", 1, 0, 0),
+        ).toEqual([indexedSites[0]]);
+        expect(
+            cache.getParsedSitesInRange("file:///test.php", 1, 1, 1),
+        ).toEqual([indexedSites[1]]);
+        expect(
+            cache.getParsedSitesInRange("file:///test.php", 1, 0, 2),
+        ).toEqual(indexedSites);
+    });
+
     it("returns undefined when doc version changes", () => {
         cache.setParsed("file:///test.php", 1, sites, defs, "<?php\ntest(1);");
         expect(cache.getParsed("file:///test.php", 2)).toBeUndefined();
@@ -112,5 +189,22 @@ describe("ParameterCache - parse result caching", () => {
         cache.setParsed("file:///test.php", 1, sites, defs, "<?php\ntest(1);");
         cache.invalidate("file:///test.php");
         expect(cache.getParsed("file:///test.php", 1)).toBeUndefined();
+    });
+
+    it("invalidate clears in-flight entries too", () => {
+        cache.setInFlight(
+            "file:///test.php",
+            "foo",
+            0,
+            0,
+            1,
+            Promise.resolve(TEST_PARAMS),
+        );
+
+        cache.invalidate("file:///test.php");
+
+        expect(
+            cache.getInFlight("file:///test.php", "foo", 0, 0, 1),
+        ).toBeUndefined();
     });
 });

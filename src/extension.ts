@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         vscode.workspace.onDidCloseTextDocument((doc) => {
             if (!phpLanguages.includes(doc.languageId)) return;
-            provider.invalidateDocument(doc.uri);
+            provider.closeDocument(doc.uri);
         }),
 
         {

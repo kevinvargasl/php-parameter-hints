@@ -49,10 +49,16 @@ export function parsePhp(code: string): ParseResult {
 
         let finalCleaned: string;
         if (isBlade) {
+            const lineOffsets = buildLineOffsets(converted);
             const echoMatches = collectBladeEchoMatches(converted);
             const directiveMatches = collectBladeDirectiveMatches(converted);
-            extractBladeEchoSites(converted, echoMatches, sites);
-            extractBladeDirectiveSites(converted, directiveMatches, sites);
+            const fragments = collectBladeFragments(
+                converted,
+                lineOffsets,
+                echoMatches,
+                directiveMatches,
+            );
+            extractBladeFragmentSites(converted, fragments, sites);
             const echoInjected = injectBladeEchos(converted, cleaned, echoMatches);
             const directiveInjected = injectBladeDirectives(converted, echoInjected, directiveMatches);
             // Re-apply <?php prefix in case a directive at column 0 overwrote it
@@ -109,16 +115,29 @@ function stripNonPhp(code: string): string {
 }
 
 function convertBladeDirectives(code: string): string {
-    const lines = code.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
+    const parts: string[] = [];
+    let lineStart = 0;
+
+    while (lineStart <= code.length) {
+        const newlineIndex = code.indexOf("\n", lineStart);
+        const lineEnd = newlineIndex === -1 ? code.length : newlineIndex;
+        const line = code.substring(lineStart, lineEnd);
+        const trimmed = line.trim();
+
         if (trimmed === "@php") {
-            lines[i] = "<?php";
+            parts.push("<?php");
         } else if (trimmed === "@endphp") {
-            lines[i] = "?>";
+            parts.push("?>");
+        } else {
+            parts.push(line);
         }
+
+        if (newlineIndex === -1) break;
+        parts.push("\n");
+        lineStart = newlineIndex + 1;
     }
-    return lines.join("\n");
+
+    return parts.join("");
 }
 
 function blankOut(code: string, from: number, to: number): string {
@@ -131,6 +150,8 @@ interface BladeEchoMatch {
     delimLen: number;
     contentStart: number;
     contentEnd: number;
+    exprStart: number;
+    exprEnd: number;
 }
 
 interface BladeDirectiveMatch {
@@ -140,23 +161,39 @@ interface BladeDirectiveMatch {
     closePos: number;
 }
 
+interface BladeFragment {
+    index: number;
+    contentStart: number;
+    contentEnd: number;
+    wrapperPrefix: string;
+    wrapperSuffix: string;
+    originalContentStartLine: number;
+    originalContentStartCol: number;
+    syntheticStartLine: number;
+    syntheticEndLine: number;
+    syntheticContentStartCol: number;
+}
+
 function collectBladeEchoMatches(code: string): BladeEchoMatch[] {
     BLADE_ECHO_REGEX.lastIndex = 0;
     const matches: BladeEchoMatch[] = [];
     let match;
 
     while ((match = BLADE_ECHO_REGEX.exec(code)) !== null) {
-        const content = match[1] ?? match[2];
-        if (!content || !content.trim()) continue;
-
         const delimLen = match[0].startsWith("{!!") ? 3 : 2;
+        const contentStart = match.index + delimLen;
+        const contentEnd = match.index + match[0].length - delimLen;
+        const trimmedRange = trimRange(code, contentStart, contentEnd);
+        if (trimmedRange.start >= trimmedRange.end) continue;
 
         matches.push({
             index: match.index,
             fullLength: match[0].length,
             delimLen,
-            contentStart: match.index + delimLen,
-            contentEnd: match.index + match[0].length - delimLen,
+            contentStart,
+            contentEnd,
+            exprStart: trimmedRange.start,
+            exprEnd: trimmedRange.end,
         });
     }
 
@@ -182,35 +219,93 @@ function offsetToLineCol(offsets: number[], offset: number): { line: number; col
     return { line: lo, col: offset - offsets[lo] };
 }
 
-function extractBladeEchoSites(code: string, echoMatches: BladeEchoMatch[], sites: CallSite[]): void {
-    if (echoMatches.length === 0) return;
-
-    const lineOffsets = buildLineOffsets(code);
+function collectBladeFragments(
+    code: string,
+    lineOffsets: number[],
+    echoMatches: BladeEchoMatch[],
+    directiveMatches: BladeDirectiveMatch[],
+): BladeFragment[] {
+    const fragments: BladeFragment[] = [];
 
     for (const em of echoMatches) {
-        const raw = code.substring(em.contentStart, em.contentEnd);
-        const expr = raw.trim();
-        const exprStart =
-            em.contentStart + (raw.length - raw.trimStart().length);
-        const pos = offsetToLineCol(lineOffsets, exprStart);
+        const pos = offsetToLineCol(lineOffsets, em.exprStart);
+        fragments.push({
+            index: em.index,
+            contentStart: em.exprStart,
+            contentEnd: em.exprEnd,
+            wrapperPrefix: "$__blade = ",
+            wrapperSuffix: ";",
+            originalContentStartLine: pos.line,
+            originalContentStartCol: pos.col,
+            syntheticStartLine: 0,
+            syntheticEndLine: 0,
+            syntheticContentStartCol: "$__blade = ".length,
+        });
+    }
 
-        try {
-            const ast = parser.parseCode(`<?php ${expr};`, "echo.php");
-            const echoSites: CallSite[] = [];
-            visitAll(ast, echoSites, new Map());
+    for (const dm of directiveMatches) {
+        const contentStart = dm.openPos + 1;
+        const pos = offsetToLineCol(lineOffsets, contentStart);
+        const keyword = dm.directive === "if" || dm.directive === "elseif" ? "if" : dm.directive;
+        const contentEnd = dm.directive === "foreach"
+            ? getForeachIterableEnd(code, contentStart, dm.closePos)
+            : dm.closePos;
+        const wrapperPrefix = `${keyword}(`;
+        fragments.push({
+            index: dm.index,
+            contentStart,
+            contentEnd,
+            wrapperPrefix,
+            wrapperSuffix: ") {}",
+            originalContentStartLine: pos.line,
+            originalContentStartCol: pos.col,
+            syntheticStartLine: 0,
+            syntheticEndLine: 0,
+            syntheticContentStartCol: wrapperPrefix.length,
+        });
+    }
 
-            for (const site of echoSites) {
-                site.namePosition.line += pos.line;
-                site.namePosition.character += pos.col - 6;
-                for (const arg of site.arguments) {
-                    arg.line += pos.line;
-                    arg.character += pos.col - 6;
-                }
-                sites.push(site);
-            }
-        } catch {
-            /* ignore */
+    fragments.sort((a, b) => a.index - b.index);
+
+    let syntheticLine = 1;
+    for (const fragment of fragments) {
+        const newlineCount = countNewlinesInRange(
+            lineOffsets,
+            fragment.contentStart,
+            fragment.contentEnd,
+        );
+        fragment.syntheticStartLine = syntheticLine;
+        fragment.syntheticEndLine = syntheticLine + newlineCount;
+        syntheticLine += newlineCount + 1;
+    }
+
+    return fragments;
+}
+
+function extractBladeFragmentSites(code: string, fragments: BladeFragment[], sites: CallSite[]): void {
+    if (fragments.length === 0) return;
+
+    const syntheticParts = ["<?php\n"];
+    for (const fragment of fragments) {
+        syntheticParts.push(fragment.wrapperPrefix);
+        syntheticParts.push(code.substring(fragment.contentStart, fragment.contentEnd));
+        syntheticParts.push(fragment.wrapperSuffix);
+        syntheticParts.push("\n");
+    }
+
+    try {
+        const ast = parser.parseCode(syntheticParts.join(""), "blade-fragments.php");
+        const fragmentSites: CallSite[] = [];
+        visitAll(ast, fragmentSites, new Map());
+
+        for (const site of fragmentSites) {
+            const fragment = findFragmentForSite(site, fragments);
+            if (!fragment) continue;
+            remapSiteToOriginal(site, fragment);
+            sites.push(site);
         }
+    } catch {
+        /* ignore */
     }
 }
 
@@ -244,39 +339,61 @@ function collectBladeDirectiveMatches(code: string): BladeDirectiveMatch[] {
     return matches;
 }
 
-function extractBladeDirectiveSites(code: string, directiveMatches: BladeDirectiveMatch[], sites: CallSite[]): void {
-    if (directiveMatches.length === 0) return;
-
-    const lineOffsets = buildLineOffsets(code);
-
-    for (const dm of directiveMatches) {
-        const contentStart = dm.openPos + 1;
-        const content = code.substring(contentStart, dm.closePos);
-        const pos = offsetToLineCol(lineOffsets, contentStart);
-
-        const keyword = dm.directive === "if" || dm.directive === "elseif" ? "if" : dm.directive;
-        const prefix = `<?php ${keyword}(`;
-        const phpWrapper = `${prefix}${content}) {}`;
-        const prefixLen = prefix.length;
-
-        try {
-            const ast = parser.parseCode(phpWrapper, "directive.php");
-            const directiveSites: CallSite[] = [];
-            visitAll(ast, directiveSites, new Map());
-
-            for (const site of directiveSites) {
-                site.namePosition.line += pos.line;
-                site.namePosition.character += pos.col - prefixLen;
-                for (const arg of site.arguments) {
-                    arg.line += pos.line;
-                    arg.character += pos.col - prefixLen;
-                }
-                sites.push(site);
-            }
-        } catch {
-            /* ignore */
-        }
+function countNewlinesInRange(lineOffsets: number[], start: number, end: number): number {
+    let count = 0;
+    for (let i = 1; i < lineOffsets.length; i++) {
+        if (lineOffsets[i] <= start) continue;
+        if (lineOffsets[i] > end) break;
+        count++;
     }
+    return count;
+}
+
+function getForeachIterableEnd(
+    code: string,
+    contentStart: number,
+    closePos: number,
+): number {
+    const content = code.substring(contentStart, closePos);
+    const asMatch = content.match(/\s+as\s+/);
+    return asMatch?.index !== undefined
+        ? contentStart + asMatch.index
+        : closePos;
+}
+
+function findFragmentForSite(site: CallSite, fragments: BladeFragment[]): BladeFragment | undefined {
+    return fragments.find((fragment) =>
+        site.namePosition.line >= fragment.syntheticStartLine &&
+        site.namePosition.line <= fragment.syntheticEndLine,
+    );
+}
+
+function remapSiteToOriginal(site: CallSite, fragment: BladeFragment): void {
+    site.namePosition = remapPosition(site.namePosition, fragment);
+    site.arguments = site.arguments.map((arg) => ({
+        ...arg,
+        ...remapPosition({ line: arg.line, character: arg.character }, fragment),
+    }));
+}
+
+function remapPosition(
+    position: { line: number; character: number },
+    fragment: BladeFragment,
+): { line: number; character: number } {
+    const lineDelta = position.line - fragment.syntheticStartLine;
+    if (lineDelta === 0) {
+        return {
+            line: fragment.originalContentStartLine,
+            character:
+                position.character - fragment.syntheticContentStartCol +
+                fragment.originalContentStartCol,
+        };
+    }
+
+    return {
+        line: fragment.originalContentStartLine + lineDelta,
+        character: position.character,
+    };
 }
 
 function injectBladeEchos(original: string, cleaned: string, echoMatches: BladeEchoMatch[]): string {
@@ -353,6 +470,16 @@ function injectBladeDirectives(original: string, finalCleaned: string, directive
     if (pos < finalCleaned.length) parts.push(finalCleaned.substring(pos));
 
     return parts.join("");
+}
+
+function trimRange(code: string, start: number, end: number): { start: number; end: number } {
+    while (start < end && /\s/.test(code[start])) {
+        start++;
+    }
+    while (end > start && /\s/.test(code[end - 1])) {
+        end--;
+    }
+    return { start, end };
 }
 
 function visitAll(node: any, sites: CallSite[], defs: Map<string, ResolvedParameter[]>): void {
